@@ -28,5 +28,10 @@
             <artifactId>s3-transfer-manager</artifactId>
             <version>${AWS_SDK_VERSION}</version>
         </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sts</artifactId>
+            <version>${AWS_SDK_VERSION}</version>
+        </dependency>
     </dependencies>
 </project>
