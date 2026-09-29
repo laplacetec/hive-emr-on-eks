@@ -70,6 +70,33 @@ RUN if [ -n "${HIVE_VERSION%%3*}" ]; then \
         wget https://repo1.maven.org/maven2/org/apache/hive/hive-standalone-metastore/${HIVE_VERSION}/hive-standalone-metastore-${HIVE_VERSION}-bin.tar.gz ; \
     fi
 
+# Backport HIVE-25879 to the pre-built 3.x package (fixed upstream only in 4.x).
+# MetaStoreDirectSql runs a self-test query every time an ObjectStore is created,
+# which is once per client connection. 3.x selects every row of DBS; with ~40k
+# databases and clients that open a connection per call (Trino), that query alone
+# sent ~1TB/day out of the metastore RDS. Upstream limits it to one row.
+# Only the query string changes: the recompiled classes are bytecode-identical to
+# the stock ones apart from that constant (checked with javap).
+RUN if [ -z "${HIVE_VERSION%%3*}" ]; then \
+        set -eux && \
+        mkdir -p /patch/src /patch/out /patch/cp && cd /patch && \
+        tar -xzf /hive/hive-standalone-metastore-${HIVE_VERSION}-bin.tar.gz && \
+        BIN=apache-hive-metastore-${HIVE_VERSION}-bin && \
+        JAR=$(ls ${BIN}/lib/hive-standalone-metastore-${HIVE_VERSION}.jar) && \
+        wget -q -O src.jar https://repo1.maven.org/maven2/org/apache/hive/hive-standalone-metastore/${HIVE_VERSION}/hive-standalone-metastore-${HIVE_VERSION}-sources.jar && \
+        wget -q -P cp https://repo1.maven.org/maven2/org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar && \
+        wget -q -P cp https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-common/3.3.6/hadoop-common-3.3.6.jar && \
+        cd src && unzip -q ../src.jar org/apache/hadoop/hive/metastore/MetaStoreDirectSql.java && cd .. && \
+        F=src/org/apache/hadoop/hive/metastore/MetaStoreDirectSql.java && \
+        sed -i 's|String selfTestQuery = "select \\"DB_ID\\" from " + DBS + "";|String selfTestQuery = "select \\"DB_ID\\" from " + DBS + " WHERE \\"DB_ID\\"=1";|' $F && \
+        grep -q 'WHERE \\"DB_ID\\"=1' $F && \
+        javac -nowarn -proc:none -source 8 -target 8 -cp "${BIN}/lib/*:cp/*" -d out $F && \
+        (cd out && jar uf ../${JAR} org/apache/hadoop/hive/metastore/MetaStoreDirectSql*.class) && \
+        unzip -p ${JAR} org/apache/hadoop/hive/metastore/MetaStoreDirectSql.class | grep -aq 'WHERE "DB_ID"=1' && \
+        tar -czf /hive/hive-standalone-metastore-${HIVE_VERSION}-bin.tar.gz ${BIN} && \
+        cd / && rm -rf /patch ; \
+    fi
+
 
 # Continue from the selected template stage
 FROM build_${BUILD_ENV} AS build
