@@ -86,13 +86,14 @@ RUN if [ -z "${HIVE_VERSION%%3*}" ]; then \
         wget -q -O src.jar https://repo1.maven.org/maven2/org/apache/hive/hive-standalone-metastore/${HIVE_VERSION}/hive-standalone-metastore-${HIVE_VERSION}-sources.jar && \
         wget -q -P cp https://repo1.maven.org/maven2/org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar && \
         wget -q -P cp https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-common/3.3.6/hadoop-common-3.3.6.jar && \
-        cd src && unzip -q ../src.jar org/apache/hadoop/hive/metastore/MetaStoreDirectSql.java && cd .. && \
+        (cd src && jar xf ../src.jar org/apache/hadoop/hive/metastore/MetaStoreDirectSql.java) && \
         F=src/org/apache/hadoop/hive/metastore/MetaStoreDirectSql.java && \
         sed -i 's|String selfTestQuery = "select \\"DB_ID\\" from " + DBS + "";|String selfTestQuery = "select \\"DB_ID\\" from " + DBS + " WHERE \\"DB_ID\\"=1";|' $F && \
         grep -q 'WHERE \\"DB_ID\\"=1' $F && \
         javac -nowarn -proc:none -source 8 -target 8 -cp "${BIN}/lib/*:cp/*" -d out $F && \
         (cd out && jar uf ../${JAR} org/apache/hadoop/hive/metastore/MetaStoreDirectSql*.class) && \
-        unzip -p ${JAR} org/apache/hadoop/hive/metastore/MetaStoreDirectSql.class | grep -aq 'WHERE "DB_ID"=1' && \
+        mkdir check && (cd check && jar xf ../${JAR} org/apache/hadoop/hive/metastore/MetaStoreDirectSql.class) && \
+        grep -aq 'WHERE "DB_ID"=1' check/org/apache/hadoop/hive/metastore/MetaStoreDirectSql.class && \
         tar -czf /hive/hive-standalone-metastore-${HIVE_VERSION}-bin.tar.gz ${BIN} && \
         cd / && rm -rf /patch ; \
     fi
