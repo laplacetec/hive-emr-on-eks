@@ -28,8 +28,10 @@ jobs:
 
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
+      # The image name points at the upstream aws-samples package, which this fork
+      # cannot write to, so only log in and push when running in that repository.
       - name: Log into registry ${{ env.REGISTRY }}
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.repository_owner == 'aws-samples'
         uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY }}
@@ -51,6 +53,38 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: docker/
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' && github.repository_owner == 'aws-samples' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.HMS_VERSION_TAG }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  # PR-only: build each 3.x version we patch (never pushed) and prove the
+  # HIVE-25879 backport made it into the jar that ships in the final image.
+  verify-hive-25879:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        hive: ["3.0.0", "3.1.3"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (load only, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/
+          push: false
+          load: true
+          build-args: HIVE_VERSION=${{ matrix.hive }}
+          tags: hms-verify:${{ matrix.hive }}
+      - name: Patched self-test query is in the shipped jar
+        run: |
+          docker run --rm --entrypoint sh hms-verify:${{ matrix.hive }} -c '
+            set -eu
+            cd /tmp
+            jar xf /opt/hive-metastore/lib/hive-standalone-metastore-${0}.jar org/apache/hadoop/hive/metastore/MetaStoreDirectSql.class
+            grep -aq "WHERE \"DB_ID\"=1" org/apache/hadoop/hive/metastore/MetaStoreDirectSql.class
+            echo "patched: hive-standalone-metastore-${0}.jar"
+          ' "${{ matrix.hive }}"
